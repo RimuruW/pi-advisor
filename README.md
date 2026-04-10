@@ -74,8 +74,7 @@ Disable it:
 
 ```text
 .
-├── advisor.ts   # extension implementation
-├── index.ts     # package entrypoint referenced by pi.extensions
+├── index.ts     # extension implementation and package entrypoint
 ├── package.json
 ├── README.md
 └── tests/

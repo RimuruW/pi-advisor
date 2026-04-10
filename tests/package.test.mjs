@@ -27,15 +27,17 @@ test('package manifest declares a pi package entrypoint', () => {
   assert.equal(pkg.type, 'module');
   assert.ok(Array.isArray(pkg.keywords) && pkg.keywords.includes('pi-package'), 'keywords should include pi-package');
   assert.deepEqual(pkg.pi?.extensions, ['./index.ts']);
+  assert.ok(Array.isArray(pkg.files) && pkg.files.includes('index.ts'), 'package files should include index.ts');
+  assert.equal(pkg.files?.includes('advisor.ts'), false, 'package files should not include advisor.ts');
 
   for (const dep of ['@mariozechner/pi-ai', '@mariozechner/pi-coding-agent', '@mariozechner/pi-tui', '@sinclair/typebox']) {
     assert.equal(pkg.peerDependencies?.[dep], '*', `peerDependencies should include ${dep}`);
   }
 });
 
-test('package exposes index.ts and advisor implementation files', () => {
+test('package keeps a single extension entry file at the root', () => {
   assert.ok(existsSync(join(repoRoot, 'index.ts')), 'index.ts should exist');
-  assert.ok(existsSync(join(repoRoot, 'advisor.ts')), 'advisor.ts should exist');
+  assert.equal(existsSync(join(repoRoot, 'advisor.ts')), false, 'advisor.ts should not exist once index.ts is the real implementation');
 });
 
 test('README documents install and usage', () => {
