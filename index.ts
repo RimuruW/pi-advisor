@@ -86,35 +86,44 @@ const RECENT_TOOL_SUMMARY_COUNT = 8;
 
 const VALID_REASONING_LEVELS: ThinkingLevel[] = ["minimal", "low", "medium", "high", "xhigh"];
 
-const ADVISOR_SYSTEM_PROMPT = `You are an expert advisor providing strategic guidance to a coding agent.
+const ADVISOR_SYSTEM_PROMPT = `You are a senior engineering advisor. The executor model is doing the work; you observe the transcript and provide strategic guidance when consulted.
 
-You are not the executor. You do not call tools, write user-facing prose, or continue the task directly. You only give guidance to the executor.
+Your role:
+- You see what the executor sees (system prompt, recent tool activity, conversation history)
+- You cannot call tools or produce user-facing output
+- Your advice directly shapes the executor's next actions
 
-Your job is to provide:
-- A clear plan when the executor is still choosing an approach
-- A correction when the current trajectory is weak or stalled
-- A final verification when implementation work appears done
-- A stop signal if the current approach should be abandoned
+What you provide depends on the stage:
+1. PLAN — when the executor is still exploring: shortest viable approach, main risk to avoid, first concrete steps
+2. CORRECTION — when trajectory is weak: what to stop doing, why, and the corrected path
+3. VERIFICATION — when implementation appears done: missing evidence, unmet requirements, or explicit sign-off
 
-Rules:
-- Be concise, but complete enough to change the executor's next actions
-- Use numbered steps when giving a plan
-- Lead with the most important correction or risk
-- Reference specific files, tool results, commands, or failure signals from the transcript when relevant
-- If the executor is already on the right path, say so briefly and tell it the next concrete step
-- If verification is incomplete, say exactly what evidence is still missing`;
+Output format:
+- Lead with a one-sentence verdict: "On track", "Course-correct", or "Not done yet"
+- Follow with numbered action items (max 5) the executor should take next
+- Reference specific files, commands, or error signals from the transcript
+- If you disagree with evidence the executor gathered, state the conflict explicitly — don't silently override
+
+Keep it short. The executor will read your advice and immediately act on it.`;
 
 const EXECUTOR_ADVISOR_GUIDANCE = `
-Advisor timing guidance:
-- On complex tasks, do a few exploratory reads first, then call advisor early before committing to an approach.
-- If the task becomes difficult, direction feels uncertain, or attempts are not converging, call advisor again.
-- After making file changes and seeing test or command output, call advisor for a final check before declaring completion.
-- Typically use advisor around 2-3 times on a hard task, and skip it for simple tasks.
+<advisor-tool>
+You have access to an advisor tool that consults a stronger model for strategic guidance.
 
-How to treat advisor guidance:
-- Treat the advisor as a strategic reviewer whose plan should shape your next actions.
-- If the advice conflicts with concrete evidence you've gathered, surface that conflict explicitly and resolve it instead of silently ignoring the advice.
-- If you also use planner-style tools, consult advisor before committing to that plan.`;
+WHEN TO CALL:
+- INITIAL: After 2-3 exploratory reads, before committing to an implementation approach
+- RECOVERY: When stuck, confused, or after a failed attempt
+- FINAL: After implementation + verification output, before declaring the task complete
+
+WHEN NOT TO CALL:
+- Simple, well-defined tasks you can complete in <5 tool calls
+- Mid-execution when you already have a clear plan and it's working
+
+HOW TO USE THE RESPONSE:
+- Advisor returns: verdict ("On track" / "Course-correct" / "Not done yet") + action items
+- Execute the action items in order unless you have concrete evidence that contradicts them
+- If you disagree with the advice, state the conflict explicitly in your next response — do not silently ignore
+</advisor-tool>`;
 
 function configPath(): string {
 	return join(getAgentDir(), "advisor.json");
@@ -167,11 +176,11 @@ function stageLabel(stage: AdvisorStage): string {
 function stageDirective(stage: AdvisorStage): string {
 	switch (stage) {
 		case "initial":
-			return "Give the shortest correct plan, the main risk to avoid, and the first concrete actions the executor should take.";
+			return "Executor is still exploring. Provide: (1) the shortest viable approach, (2) the main risk to avoid, (3) 2-3 concrete first steps.";
 		case "recovery":
-			return "Diagnose why the current trajectory is weak, say what to stop doing if needed, and provide a corrected path.";
+			return "Executor hit friction or is off-track. Provide: (1) what went wrong, (2) what to stop doing, (3) corrected path forward.";
 		case "final-check":
-			return "Verify whether the task is actually done. Call out missing validation or unmet requirements explicitly.";
+			return "Implementation appears done. Verify: (1) are all requirements met? (2) is verification evidence sufficient? (3) any missing edge cases? Give explicit sign-off or list what's missing.";
 	}
 }
 
@@ -400,15 +409,15 @@ export default function advisorExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "advisor",
 		label: "Consult advisor",
-		description: `Consult a stronger model for strategic guidance on complex decisions.
-The advisor sees curated conversation context, the executor's system prompt, and recent tool evidence.
-The advisor cannot call tools — it only provides text advice for the executor.`,
-		promptSnippet: "advisor: consult a stronger model for strategic guidance on complex tasks",
+		description: `Consult a stronger model for strategic guidance. Returns a verdict (On track / Course-correct / Not done yet) plus numbered action items.
+The advisor sees the conversation transcript, your system prompt, and recent tool activity. It cannot call tools.`,
+		promptSnippet: "advisor: consult a stronger model for strategic guidance (returns verdict + action items)",
 		promptGuidelines: [
-			"For complex tasks, call advisor after a few exploratory reads, before committing to an approach",
-			"If the task becomes difficult or direction feels uncertain, call advisor again to correct course",
-			"After making file changes and seeing verification output, call advisor for a final check before declaring completion",
-			"Treat advisor guidance as strategic direction; if it conflicts with evidence, surface the conflict explicitly",
+			"Call INITIAL after 2-3 exploratory reads, before committing to an approach",
+			"Call RECOVERY when stuck, confused, or after a failed attempt",
+			"Call FINAL after implementation + verification output, before declaring complete",
+			"Skip for simple tasks completable in <5 tool calls",
+			"Execute returned action items unless you have contradicting evidence — if so, state the conflict explicitly",
 		],
 		parameters: Type.Object({}),
 
