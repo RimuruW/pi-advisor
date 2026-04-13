@@ -1,16 +1,23 @@
 # pi-advisor
 
-`pi-advisor` is a Pi package that adds an `advisor` extension modeled after Claude's advisor strategy: the main executor keeps doing the work, and calls a stronger model only when it needs strategic guidance.
+> A [Pi](https://github.com/RimuruW/pi-advisor) extension that adds a strategic advisor tool for complex coding agent tasks.
 
-## What it does
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![npm package](https://img.shields.io/npm/v/pi-advisor)](https://www.npmjs.com/package/pi-advisor)
 
-- registers an `advisor` tool callable by the executor
-- injects advisor timing guidance into the executor system prompt
-- curates transcript context before calling the advisor model
-- renders advisor output as a compact block in the Pi TUI
-- exposes `/advisor` commands for enable/disable/config/manual trigger
-- configurable reasoning effort (`minimal`–`xhigh`) via pi-ai `completeSimple` API
-- tab completion for `/advisor` subcommands and config keys
+## Overview
+
+`pi-advisor` adds an `advisor` tool to the Pi coding agent, modeled after [Anthropic's advisor tool pattern](https://claude.com/blog/the-advisor-strategy): the executor model keeps doing the work and only consults a stronger "advisor" model when it needs strategic guidance — not for syntax-level questions or routine implementation steps.
+
+The advisor sees a curated transcript, understands the current task stage, and returns a verdict plus numbered action items.
+
+## Features
+
+- **Stage-aware guidance** — automatically detects whether the executor is exploring, stuck, or ready for final verification, and tailors the advisor prompt accordingly
+- **Curated context** — sends only relevant conversation history, bounded system prompt, and recent tool activity to keep token usage efficient
+- **Configurable model & effort** — choose any provider/model and tune reasoning effort (`minimal`–`xhigh`), token budget, and context window
+- **Slash commands** — `/advisor on`, `/advisor off`, `/advisor config`, `/advisor ask` with tab completion
+- **Compact TUI rendering** — advisor output renders inline with token usage, stage label, and expand-to-read hint
 
 ## Install
 
@@ -20,93 +27,132 @@
 pi install npm:pi-advisor
 ```
 
-### From a git repo
+### From git
 
 ```bash
 pi install git:github.com/RimuruW/pi-advisor
 ```
 
-### For local development
-
-```bash
-pi -e ./index.ts
-```
-
-This package follows the Pi package manifest format and is discoverable as a **pi package** through the `pi-package` keyword.
+This is a pi package — install via npm, git, or local path.
 
 ## Usage
 
 Enable the advisor with the default model:
 
-```bash
+```
 /advisor on
 ```
 
-Enable a specific model:
+Enable with a specific model:
 
-```bash
+```
 /advisor on anthropic/claude-opus-4-6
 ```
 
-Set reasoning effort (default: high):
+### Commands
 
-```bash
-/advisor config reasoning=xhigh
+| Command | Description |
+|---|---|
+| `/advisor` | Show current status |
+| `/advisor on [provider/model]` | Enable advisor (optionally set model) |
+| `/advisor off` | Disable advisor |
+| `/advisor config` | Show full configuration |
+| `/advisor config key=value` | Set a config value |
+| `/advisor ask` | Manually trigger advisor consultation |
+
+### Configuration
+
 ```
-
-Available levels: `minimal`, `low`, `medium`, `high`, `xhigh`.
-
-Set max context messages sent to advisor (default: 18):
-
-```bash
 /advisor config maxContextMessages=24
+/advisor config reasoning=xhigh
+/advisor config maxTokens=16384
 ```
 
-Show config:
+| Key | Default | Description |
+|---|---|---|
+| `provider` | `anthropic` | Model provider |
+| `model` | `claude-opus-4-6` | Model identifier |
+| `maxUsesPerRun` | `3` | Max advisor calls per agent run |
+| `maxTokens` | `8192` | Max output tokens per advisor call |
+| `reasoning` | `high` | Reasoning effort level (`minimal`, `low`, `medium`, `high`, `xhigh`) |
+| `maxContextMessages` | `18` | Max transcript messages sent to advisor |
 
-```bash
-/advisor config
+Configuration persists to `~/.pi/agent/advisor.json`.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────┐
+│              Executor (LLM)              │
+│  ┌───────────────────────────────────┐   │
+│  │  Decides when to call advisor      │   │
+│  │  Reads advisor output & acts       │   │
+│  └──────────────┬────────────────────┘   │
+└─────────────────┼───────────────────────┘
+                  │ advisor(params)
+                  ▼
+┌─────────────────────────────────────────┐
+│           Advisor Extension              │
+│                                          │
+│  1. Detect current stage                 │
+│     (initial / recovery / final-check)   │
+│  2. Build curated context:               │
+│     - Bounded system prompt              │
+│     - Active tools summary               │
+│     - Recent tool activity               │
+│     - Transcript (first + last N msgs)   │
+│  3. Call advisor model via pi-ai         │
+│  4. Return verdict + action items        │
+└─────────────────────────────────────────┘
+                  │
+                  ▼
+┌─────────────────────────────────────────┐
+│           Advisor Model (LLM)            │
+│  Stronger model, returns:                │
+│  - Verdict: "On track" /                 │
+│             "Course-correct" /           │
+│             "Not done yet"               │
+│  - Numbered action items (≤ 5)          │
+│  - References to files, commands,        │
+│    or error signals from transcript      │
+└─────────────────────────────────────────┘
 ```
 
-Update config:
+### Stage Detection
 
-```bash
-/advisor config maxTokens=8192
+The extension infers the executor's current stage from recent tool activity:
+
+| Stage | Trigger |
+|---|---|
+| **initial** | Exploratory reads/commands, no file mutations yet |
+| **recovery** | Recent failure, or off-track implementation |
+| **final-check** | Changes exist and verification output is in transcript |
+
+## Project Structure
+
 ```
-
-Manually ask the executor to consult the advisor:
-
-```bash
-/advisor ask
-```
-
-Disable it:
-
-```bash
-/advisor off
-```
-
-## Package structure
-
-```text
 .
-├── index.ts     # extension implementation and package entrypoint
+├── index.ts              # Extension entrypoint (tool + command registration)
+├── src/
+│   └── advisor-messages.ts   # Transcript curation for advisor context
+├── tests/
+│   └── package.test.mjs      # Package manifest & smoke tests
 ├── package.json
+├── CHANGELOG.md
 ├── README.md
-└── tests/
+└── LICENSE
 ```
 
 ## Development
 
-Run the package smoke tests:
-
 ```bash
+# Run tests
 npm test
+
+# Smoke-load as an extension
+pi -e ./index.ts
 ```
 
-The tests verify:
+## License
 
-- package manifest shape expected by Pi
-- root `index.ts` entrypoint
-- README install/usage instructions
-- `pi -e ./index.ts` smoke loading
+MIT. See [LICENSE](LICENSE).
